@@ -17,3 +17,10 @@ updates:
       interval: daily
     commit-message:
       prefix: "fix(deps)"
+
+  - package-ecosystem: "docker"
+    directory: "/jellyfin-server-next"
+    schedule:
+      interval: daily
+    commit-message:
+      prefix: "fix(deps)"

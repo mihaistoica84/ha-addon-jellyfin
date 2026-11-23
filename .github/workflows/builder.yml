@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      matrix-next: ${{ steps.matrix-next.outputs.matrix }}
       version: ${{ steps.meta.outputs.version }}
       tags: ${{ steps.meta.outputs.tags }}
       push: ${{ steps.meta.outputs.push }}
@@ -68,6 +69,13 @@ jobs:
           architectures: ${{ env.ARCHITECTURES }}
           image-name: jellyfin-server
 
+      - name: Get build matrix (jellyfin-server-next)
+        id: matrix-next
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@2026.09.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: jellyfin-server-next
+
   build:
     name: Build ${{ matrix.arch }} image
     needs: init
@@ -92,6 +100,33 @@ jobs:
           version: ${{ needs.init.outputs.version }}
           push: ${{ needs.init.outputs.push }}
           file: jellyfin-server/Dockerfile
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+  build-next:
+    name: Build ${{ matrix.arch }} image (jellyfin-server-next)
+    needs: init
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.init.outputs.matrix-next) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build jellyfin-server-next add-on
+        uses: home-assistant/builder/actions/build-image@2026.09.0
+        with:
+          arch: ${{ matrix.arch }}
+          image: ${{ matrix.image }}
+          image-tags: ${{ needs.init.outputs.tags }}
+          version: ${{ needs.init.outputs.version }}
+          push: ${{ needs.init.outputs.push }}
+          context: jellyfin-server-next
+          cache-gha-scope: jellyfin-server-next-${{ matrix.arch }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
 
   manifest:
@@ -131,3 +166,20 @@ jobs:
                 "ghcr.io/${OWNER}/${arch}-jellyfin-server:${tag}"
             done
           done <<< "$TAGS"
+
+  manifest-next:
+    name: Publish multi-arch manifest (jellyfin-server-next)
+    needs: [init, build-next]
+    if: needs.init.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      packages: write
+    steps:
+      - name: Publish multi-arch manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.09.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: jellyfin-server-next
+          image-tags: ${{ needs.init.outputs.tags }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}

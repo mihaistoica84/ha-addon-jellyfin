@@ -15,6 +15,11 @@
           "path": "jellyfin-server-hn/config.yaml",
           "type": "yaml",
           "jsonpath": "$.version"
+        },
+        {
+          "path": "jellyfin-server-next/config.yaml",
+          "type": "yaml",
+          "jsonpath": "$.version"
         }
       ]
     }
