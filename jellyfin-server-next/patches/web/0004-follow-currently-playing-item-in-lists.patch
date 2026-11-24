@@ -1,0 +1,233 @@
+From 141c927f5fb49c622d1e80bcb1664dd9ae05e4d1 Mon Sep 17 00:00:00 2001
+From: mihaistoica84 <5723936+mihaistoica84@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 13:28:19 +0000
+Subject: [PATCH] Highlight and scroll to the currently playing item in lists
+
+When a track starts playing, lists (library song lists, playlists, albums,
+the play queue) now highlight the row of the playing item, scroll it into
+view if it is off-screen and move keyboard focus to it when focus is not
+elsewhere. The same happens when a list is rendered or its page is shown
+again while something is playing.
+---
+ src/components/listview/listview.scss         |   9 ++
+ .../emby-itemscontainer/ItemsContainer.tsx    |   9 ++
+ .../emby-itemscontainer.js                    |   7 +
+ .../emby-itemscontainer/followPlayingItem.ts  | 127 ++++++++++++++++++
+ 4 files changed, 152 insertions(+)
+ create mode 100644 src/elements/emby-itemscontainer/followPlayingItem.ts
+
+diff --git a/src/components/listview/listview.scss b/src/components/listview/listview.scss
+index ce96f93b24..35e493279f 100644
+--- a/src/components/listview/listview.scss
++++ b/src/components/listview/listview.scss
+@@ -34,6 +34,15 @@
+     }
+ }
+ 
++.listItem.listItem-nowPlaying {
++    background-color: rgba(0, 164, 220, 0.18);
++    box-shadow: inset 0.25em 0 0 #00a4dc;
++}
++
++[dir="rtl"] .listItem.listItem-nowPlaying {
++    box-shadow: inset -0.25em 0 0 #00a4dc;
++}
++
+ .listItem-withContentWrapper {
+     flex-direction: column;
+     align-items: flex-start;
+diff --git a/src/elements/emby-itemscontainer/ItemsContainer.tsx b/src/elements/emby-itemscontainer/ItemsContainer.tsx
+index 2d0659a5e6..086d044cff 100644
+--- a/src/elements/emby-itemscontainer/ItemsContainer.tsx
++++ b/src/elements/emby-itemscontainer/ItemsContainer.tsx
+@@ -23,6 +23,8 @@ import focusManager from 'components/focusManager';
+ import type { ParentId } from 'types/library';
+ import type { PlaybackStopInfo } from 'types/playbackStopInfo';
+ 
++import { followPlayingItem } from './followPlayingItem';
++
+ function disableEvent(e: MouseEvent) {
+     e.preventDefault();
+     e.stopPropagation();
+@@ -390,6 +392,13 @@ const ItemsContainer: FC<PropsWithChildren<ItemsContainerProps>> = ({
+         onPlaybackStopped
+     ]);
+ 
++    useEffect(() => {
++        const itemsContainer = itemsContainerRef.current;
++        if (!itemsContainer) return;
++
++        return followPlayingItem(itemsContainer);
++    }, []);
++
+     const itemsContainerClass = classNames(
+         'itemsContainer',
+         { 'itemsContainer-tv': layoutManager.tv },
+diff --git a/src/elements/emby-itemscontainer/emby-itemscontainer.js b/src/elements/emby-itemscontainer/emby-itemscontainer.js
+index 7ce51f477d..0cfcc09aa7 100644
+--- a/src/elements/emby-itemscontainer/emby-itemscontainer.js
++++ b/src/elements/emby-itemscontainer/emby-itemscontainer.js
+@@ -12,6 +12,7 @@ import loading from '../../components/loading/loading';
+ import focusManager from '../../components/focusManager';
+ import { ServerConnections } from 'lib/jellyfin-apiclient';
+ import { OutboundWebSocketMessageType } from '@jellyfin/sdk/lib/websocket';
++import { followPlayingItem } from './followPlayingItem';
+ 
+ const ItemsContainerPrototype = Object.create(HTMLDivElement.prototype);
+ 
+@@ -303,6 +304,9 @@ ItemsContainerPrototype.attachedCallback = function () {
+ 
+     addNotificationEvent(this, 'playbackstop', onPlaybackStopped, playbackManager);
+ 
++    this._unfollowPlayingItem?.();
++    this._unfollowPlayingItem = followPlayingItem(this);
++
+     if (this.getAttribute('data-dragreorder') === 'true') {
+         this.enableDragReordering(true);
+     }
+@@ -326,6 +330,9 @@ ItemsContainerPrototype.detachedCallback = function () {
+ 
+     removeNotificationEvent(this, 'playbackstop', playbackManager);
+ 
++    this._unfollowPlayingItem?.();
++    this._unfollowPlayingItem = null;
++
+     this.fetchData = null;
+     this.getItemsHtml = null;
+     this.parentContainer = null;
+diff --git a/src/elements/emby-itemscontainer/followPlayingItem.ts b/src/elements/emby-itemscontainer/followPlayingItem.ts
+new file mode 100644
+index 0000000000..ee19f30ea5
+--- /dev/null
++++ b/src/elements/emby-itemscontainer/followPlayingItem.ts
+@@ -0,0 +1,127 @@
++import focusManager from 'components/focusManager';
++import { playbackManager } from 'components/playback/playbackmanager';
++import Events from 'utils/events';
++
++const ROW_SELECTOR = '.listItem[data-id]';
++const PLAYING_CLASS = 'listItem-nowPlaying';
++
++function findRow(container: HTMLElement, attribute: string, value: string): HTMLElement | null {
++    const rows = container.querySelectorAll<HTMLElement>(ROW_SELECTOR);
++    for (const row of rows) {
++        if (row.getAttribute(attribute) === value) return row;
++    }
++    return null;
++}
++
++function getPlayingRow(container: HTMLElement): HTMLElement | null {
++    const player = playbackManager.getCurrentPlayer();
++    if (!player) return null;
++
++    const item = playbackManager.currentItem(player);
++    if (!item?.Id) return null;
++
++    // Prefer the exact queue entry, so a track queued twice highlights the right row
++    const playlistItemId = playbackManager.getCurrentPlaylistItemId(player);
++    return (playlistItemId && findRow(container, 'data-playlistitemid', playlistItemId))
++        || findRow(container, 'data-id', item.Id);
++}
++
++function getVisibleBounds() {
++    let top = 0;
++    let bottom = window.innerHeight;
++
++    document.querySelectorAll<HTMLElement>('.skinHeader, .MuiAppBar-root').forEach(header => {
++        const rect = header.getBoundingClientRect();
++        if (rect.height && rect.top <= 0) top = Math.max(top, rect.bottom);
++    });
++
++    const nowPlayingBar = document.querySelector<HTMLElement>('.nowPlayingBar:not(.hide)');
++    if (nowPlayingBar) {
++        const rect = nowPlayingBar.getBoundingClientRect();
++        if (rect.height) bottom = Math.min(bottom, rect.top);
++    }
++
++    return { top, bottom };
++}
++
++function isFullyVisible(row: HTMLElement) {
++    const rect = row.getBoundingClientRect();
++    const bounds = getVisibleBounds();
++    return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
++}
++
++function canMoveFocus(container: HTMLElement) {
++    const active = document.activeElement;
++    return !active || active === document.body || container.contains(active);
++}
++
++/**
++ * Keeps the row of the currently playing item highlighted, scrolled into view and focused.
++ * Returns a function that stops following.
++ */
++export function followPlayingItem(container: HTMLElement): () => void {
++    let followedRow: HTMLElement | null = null;
++    let frame = 0;
++
++    const update = () => {
++        frame = 0;
++        const row = getPlayingRow(container);
++
++        container.querySelectorAll<HTMLElement>(`.${PLAYING_CLASS}`).forEach(el => {
++            if (el !== row) el.classList.remove(PLAYING_CLASS);
++        });
++
++        if (!row) {
++            followedRow = null;
++            return;
++        }
++
++        row.classList.add(PLAYING_CLASS);
++
++        // Hidden (cached) pages are handled when they are shown again
++        if (row === followedRow || !row.offsetParent) return;
++        followedRow = row;
++
++        if (canMoveFocus(container) && focusManager.isCurrentlyFocusable(row)) {
++            row.focus({ preventScroll: true });
++        }
++
++        if (!isFullyVisible(row)) {
++            row.scrollIntoView({ block: 'center', behavior: 'smooth' });
++        }
++    };
++
++    const scheduleUpdate = () => {
++        if (!frame) frame = requestAnimationFrame(update);
++    };
++
++    const onPlaybackStart = () => {
++        followedRow = null;
++        scheduleUpdate();
++    };
++
++    const onViewShow = (e: Event) => {
++        if (e.target instanceof Node && e.target.contains(container)) {
++            followedRow = null;
++            scheduleUpdate();
++        }
++    };
++
++    const observer = new MutationObserver(scheduleUpdate);
++    observer.observe(container, { childList: true, subtree: true });
++
++    Events.on(playbackManager, 'playbackstart', onPlaybackStart);
++    Events.on(playbackManager, 'playbackstop', scheduleUpdate);
++    // viewshow does not bubble, so listen in the capture phase
++    document.addEventListener('viewshow', onViewShow, true);
++
++    scheduleUpdate();
++
++    return () => {
++        if (frame) cancelAnimationFrame(frame);
++        observer.disconnect();
++        Events.off(playbackManager, 'playbackstart', onPlaybackStart);
++        Events.off(playbackManager, 'playbackstop', scheduleUpdate);
++        document.removeEventListener('viewshow', onViewShow, true);
++    };
++}
+-- 
+2.56.1
+
