@@ -1,0 +1,123 @@
+From e15fff084502cbf8bf7ed50d0157c4a783b0a468 Mon Sep 17 00:00:00 2001
+From: mihaistoica84 <5723936+mihaistoica84@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 10:35:23 +0000
+Subject: [PATCH] Skip to the next queued item when the playing item is deleted
+
+Deleting the item that is currently playing (or its album, season or
+series) left the player playing the deleted media from its buffer.
+Playback now moves to the next queued item that still exists, or stops
+when there is none.
+---
+ src/components/multiSelect/multiSelect.js  |  6 ++-
+ src/components/playback/playbackmanager.js | 49 ++++++++++++++++++++++
+ src/scripts/deleteHelper.js                |  3 ++
+ 3 files changed, 57 insertions(+), 1 deletion(-)
+
+diff --git a/src/components/multiSelect/multiSelect.js b/src/components/multiSelect/multiSelect.js
+index e6c560fcf9..93320c40ed 100644
+--- a/src/components/multiSelect/multiSelect.js
++++ b/src/components/multiSelect/multiSelect.js
+@@ -8,6 +8,7 @@ import Events from 'utils/events';
+ import browser from '../../scripts/browser';
+ import { appHost } from '../apphost';
+ import loading from '../loading/loading';
++import { playbackManager } from '../playback/playbackmanager';
+ import globalize from '../../lib/globalize';
+ import dom from '../../utils/dom';
+ import './multiSelect.scss';
+@@ -174,7 +175,10 @@ function deleteItems(apiClient, itemIds) {
+         confirm(msg, title).then(() => {
+             const promises = itemIds.map(itemId => apiClient.deleteItem(itemId));
+ 
+-            Promise.all(promises).then(resolve, () => {
++            Promise.all(promises).then(() => {
++                playbackManager.onItemsDeleted(itemIds);
++                resolve();
++            }, () => {
+                 alertText(globalize.translate('ErrorDeletingItem')).then(reject, reject);
+             });
+         }, reject);
+diff --git a/src/components/playback/playbackmanager.js b/src/components/playback/playbackmanager.js
+index 837202c4a2..e1f119cce4 100644
+--- a/src/components/playback/playbackmanager.js
++++ b/src/components/playback/playbackmanager.js
+@@ -3136,6 +3136,55 @@ export class PlaybackManager {
+             return Promise.resolve();
+         };
+ 
++        /**
++         * Handles items that were just deleted from the server: if the playing item (or the album,
++         * season or series it belongs to) was deleted, playback moves to the next queued item that
++         * still exists, or stops if there is none, instead of continuing to play from the buffer.
++         * @param {string[]} itemIds - Ids of the deleted items.
++         * @param {Object} [player] - Player to update, defaults to the current player.
++         * @returns {Promise} Resolves once playback has been updated.
++         */
++        self.onItemsDeleted = function (itemIds, player) {
++            player = player || self._currentPlayer;
++            if (!player || !itemIds?.length) {
++                return Promise.resolve();
++            }
++
++            const isDeleted = (item) => [item?.Id, item?.AlbumId, item?.SeasonId, item?.SeriesId]
++                .some(id => id && itemIds.includes(id));
++
++            if (!isDeleted(self.currentItem(player))) {
++                return Promise.resolve();
++            }
++
++            if (!enableLocalPlaylistManagement(player)) {
++                return Promise.resolve(player.nextTrack());
++            }
++
++            const playlist = self._playQueueManager.getPlaylist();
++            const currentIndex = self._playQueueManager.getCurrentPlaylistIndex();
++            const candidates = playlist.slice(currentIndex + 1);
++            if (self._playQueueManager.getRepeatMode() === 'RepeatAll') {
++                candidates.push(...playlist.slice(0, Math.max(currentIndex, 0)));
++            }
++
++            const nextItem = candidates.find(item => !isDeleted(item));
++            if (!nextItem) {
++                return self.stop(player);
++            }
++
++            // Remove the deleted entries directly: removeFromPlaylist() would jump to the first queue item
++            const deletedPlaylistItemIds = playlist.filter(isDeleted).map(item => item.PlaylistItemId);
++            self._playQueueManager.removeFromPlaylist(deletedPlaylistItemIds);
++            Events.trigger(player, 'playlistitemremove', [
++                {
++                    playlistItemIds: deletedPlaylistItemIds
++                }
++            ]);
++
++            return Promise.resolve(self.setCurrentPlaylistItem(nextItem.PlaylistItemId, player));
++        };
++
+         self.movePlaylistItem = function (playlistItemId, newIndex, player) {
+             player = player || self._currentPlayer;
+             if (player && !enableLocalPlaylistManagement(player)) {
+diff --git a/src/scripts/deleteHelper.js b/src/scripts/deleteHelper.js
+index b2d515ab8d..91134535df 100644
+--- a/src/scripts/deleteHelper.js
++++ b/src/scripts/deleteHelper.js
+@@ -3,6 +3,7 @@ import { BaseItemKind } from '@jellyfin/sdk/lib/generated-client/models/base-ite
+ 
+ import alert from 'components/alert';
+ import confirm from 'components/confirm/confirm';
++import { playbackManager } from 'components/playback/playbackmanager';
+ import { appRouter } from 'components/router/appRouter';
+ import globalize from 'lib/globalize';
+ import { ServerConnections } from 'lib/jellyfin-apiclient';
+@@ -56,6 +57,8 @@ export function deleteItem(options) {
+ 
+     return confirm(getDeletionConfirmContent(item)).then(function () {
+         return apiClient.deleteItem(item.Id).then(function () {
++            playbackManager.onItemsDeleted([item.Id]);
++
+             if (options.navigate) {
+                 if (parentId) {
+                     appRouter.showItem(parentId, item.ServerId);
+-- 
+2.56.1
+

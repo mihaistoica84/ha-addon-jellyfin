@@ -7,15 +7,16 @@
 [amd64-shield]: https://img.shields.io/badge/amd64-yes-green.svg
 
 This [Home Assistant](https://www.home-assistant.io/addons/) add-on installs the
-[Jellyfin](https://jellyfin.org/) 12.4 server, built from source with the
-fixes in [`patches/`](./patches) applied on top of the official release:
+[Jellyfin](https://jellyfin.org/) 12.4 server and web client, built from source
+with the fixes in [`patches/`](./patches) applied on top of the official release:
 
 | Patch | Fixes |
 |---|---|
-| `0001-reload-user-data-before-saving-playback-state.patch` ([jellyfin#18366](https://github.com/jellyfin/jellyfin/pull/18366)) | Favorites (and ratings/played state) changed on the currently playing item being reverted by the next playback progress report ([jellyfin#14981](https://github.com/jellyfin/jellyfin/issues/14981)) |
+| `server/0001-reload-user-data-before-saving-playback-state.patch` ([jellyfin#18366](https://github.com/jellyfin/jellyfin/pull/18366)) | Favorites (and ratings/played state) changed on the currently playing item being reverted by the next playback progress report ([jellyfin#14981](https://github.com/jellyfin/jellyfin/issues/14981)) |
+| `web/0001-skip-to-next-item-when-playing-item-is-deleted.patch` | Deleting the currently playing item (or its album, season or series) in the web client kept playing the deleted media from the buffer; playback now moves to the next queued item, or stops if there is none |
 
-The web client, ffmpeg and hardware acceleration drivers come unchanged from
-the official `jellyfin/jellyfin` image.
+ffmpeg and hardware acceleration drivers come unchanged from the official
+`jellyfin/jellyfin` image.
 
 Server is exposed on port `8096`, and must be accessed directly.
 
@@ -36,7 +37,9 @@ and must be deleted manually. This is intentional.
 
 ## Adding a patch
 
-1. Put a `git format-patch` file, applicable to the Jellyfin tag in
-   `JELLYFIN_REF` (see [`Dockerfile`](./Dockerfile)), into `patches/`.
-   Patches are applied in file name order.
+1. Put a `git format-patch` file into `patches/server/` (applicable to the
+   [jellyfin](https://github.com/jellyfin/jellyfin) tag in `JELLYFIN_REF`) or
+   `patches/web/` (applicable to the [jellyfin-web](https://github.com/jellyfin/jellyfin-web)
+   tag in `JELLYFIN_WEB_REF`), see [`Dockerfile`](./Dockerfile). Each folder needs
+   at least one patch; patches are applied in file name order.
 2. Bump `version` in `config.yaml` and push a matching `v*` tag to publish the image.

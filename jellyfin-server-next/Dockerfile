@@ -1,6 +1,7 @@
 # https://developers.home-assistant.io/docs/add-ons/configuration#add-on-dockerfile
-# Jellyfin server built from source at JELLYFIN_REF with the patches in ./patches applied,
-# layered on the official image so ffmpeg, GPU drivers and jellyfin-web stay the official ones.
+# Jellyfin server and web client built from source at JELLYFIN_REF / JELLYFIN_WEB_REF with the
+# patches in ./patches/server and ./patches/web applied, layered on the official image so ffmpeg
+# and GPU drivers stay the official ones.
 ARG JELLYFIN_IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 
 FROM --platform=$BUILDPLATFORM ubuntu:26.04 AS server
@@ -15,7 +16,7 @@ RUN apt-get update \
 WORKDIR /src
 RUN git clone --depth 1 --branch "${JELLYFIN_REF}" https://github.com/jellyfin/jellyfin.git .
 
-COPY patches/ /patches/
+COPY patches/server/ /patches/
 RUN for patch in /patches/*.patch; do git apply --verbose "${patch}" || exit 1; done
 
 RUN case "${TARGETARCH}" in \
@@ -26,11 +27,24 @@ RUN case "${TARGETARCH}" in \
  && dotnet publish Jellyfin.Server --arch "${DOTNET_ARCH}" --configuration Release \
       --output /server --self-contained -p:DebugSymbols=false -p:DebugType=none
 
+# The web client is plain JavaScript, so it is built once on the build platform for all architectures
+FROM --platform=$BUILDPLATFORM node:24 AS web
+ARG JELLYFIN_WEB_REF=v12.4
+
+WORKDIR /src
+RUN git clone --depth 1 --branch "${JELLYFIN_WEB_REF}" https://github.com/jellyfin/jellyfin-web.git .
+
+COPY patches/web/ /patches/
+RUN for patch in /patches/*.patch; do git apply --verbose "${patch}" || exit 1; done
+
+RUN npm ci --no-audit --no-fund && npm run build:production
+
 FROM ${JELLYFIN_IMAGE}
 
-# Replace the official server binaries, keeping the bundled web client
-RUN find /jellyfin -mindepth 1 -maxdepth 1 ! -name jellyfin-web -exec rm -rf {} +
+# Replace the official server binaries and web client
+RUN rm -rf /jellyfin/*
 COPY --from=server /server/ /jellyfin/
+COPY --from=web /src/dist/ /jellyfin/jellyfin-web/
 
 # Separate data directory, so the existing Jellyfin add-on's /share/jellyfin is never touched
 ENV JELLYFIN_DATA_DIR=/share/jellyfin-next
