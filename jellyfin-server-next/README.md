@@ -14,6 +14,7 @@ with the fixes in [`patches/`](./patches) applied on top of the official release
 |---|---|
 | `server/0001-reload-user-data-before-saving-playback-state.patch` ([jellyfin#18366](https://github.com/jellyfin/jellyfin/pull/18366)) | Favorites (and ratings/played state) changed on the currently playing item being reverted by the next playback progress report ([jellyfin#14981](https://github.com/jellyfin/jellyfin/issues/14981)) |
 | `web/0001-skip-to-next-item-when-playing-item-is-deleted.patch` | Deleting the currently playing item (or its album, season or series) in the web client kept playing the deleted media from the buffer; playback now moves to the next queued item, or stops if there is none |
+| `web/0002-ctrl-shift-d-deletes-playing-item.patch` | New keyboard shortcut: **Ctrl+Shift+D** in the web client deletes the currently playing item, after the usual delete confirmation (Enter confirms, Esc cancels) |
 
 ffmpeg and hardware acceleration drivers come unchanged from the official
 `jellyfin/jellyfin` image.

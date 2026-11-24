@@ -1,0 +1,152 @@
+From 9cfd63aa0c3003130b65717445a43d2475cf601e Mon Sep 17 00:00:00 2001
+From: mihaistoica84 <5723936+mihaistoica84@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 11:13:35 +0000
+Subject: [PATCH] Add Ctrl+Shift+D shortcut to delete the currently playing
+ item
+
+Shows the usual delete confirmation dialog with the Delete button
+focused, so Enter confirms and Escape cancels. Does nothing when
+nothing is playing, and shows an error when the user cannot delete
+the item.
+---
+ src/index.jsx                            |  2 +
+ src/scripts/deletePlayingItemShortcut.js | 94 ++++++++++++++++++++++++
+ src/strings/en-us.json                   |  1 +
+ 3 files changed, 97 insertions(+)
+ create mode 100644 src/scripts/deletePlayingItemShortcut.js
+
+diff --git a/src/index.jsx b/src/index.jsx
+index ca6b67c74d..6ae0d6761d 100644
+--- a/src/index.jsx
++++ b/src/index.jsx
+@@ -19,6 +19,7 @@ import { loadCoreDictionary } from 'lib/globalize/loader';
+ import getServerAddress from 'lib/jellyfin-apiclient/utils/getServerAddress';
+ import { initialize as initializeAutoCast } from 'scripts/autocast';
+ import browser from './scripts/browser';
++import deletePlayingItemShortcut from './scripts/deletePlayingItemShortcut';
+ import keyboardNavigation from './scripts/keyboardNavigation';
+ import { getPlugins } from './scripts/settings/webSettings';
+ import taskButton from './scripts/taskbutton';
+@@ -131,6 +132,7 @@ build: ${__JF_BUILD_VERSION__}`);
+ 
+     // Enable navigation controls
+     keyboardNavigation.enable();
++    deletePlayingItemShortcut.enable();
+     autoFocuser.enable();
+ }
+ 
+diff --git a/src/scripts/deletePlayingItemShortcut.js b/src/scripts/deletePlayingItemShortcut.js
+new file mode 100644
+index 0000000000..2744e89e4f
+--- /dev/null
++++ b/src/scripts/deletePlayingItemShortcut.js
+@@ -0,0 +1,94 @@
++/**
++ * Ctrl+Shift+D deletes the currently playing item, after the usual delete confirmation
++ * (with Delete focused, so Enter confirms and Escape cancels).
++ * @module scripts/deletePlayingItemShortcut
++ */
++
++import { ServerConnections } from 'lib/jellyfin-apiclient';
++import globalize from 'lib/globalize';
++
++let isDeleting = false;
++
++export function isDeleteShortcut(e) {
++    return e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyD';
++}
++
++async function deletePlayingItem() {
++    const { playbackManager } = await import('components/playback/playbackmanager');
++    const player = playbackManager.getCurrentPlayer();
++    const playingItem = player && playbackManager.currentItem(player);
++    if (!playingItem?.Id) {
++        return;
++    }
++
++    const apiClient = ServerConnections.getApiClient(playingItem.ServerId);
++    const item = await apiClient.getItem(apiClient.getCurrentUserId(), playingItem.Id);
++    if (!item.CanDelete) {
++        const { default: toast } = await import('components/toast/toast');
++        toast(globalize.translate('MessageDeletePlayingItemNotAllowed'));
++        return;
++    }
++
++    const { deleteItem } = await import('./deleteHelper');
++    const deletion = deleteItem({ item, navigate: false });
++    focusConfirmButton();
++    await deletion;
++}
++
++/**
++ * Focuses the confirm dialog's Delete button once the dialog has finished opening
++ * (dialogs focus Cancel when their open animation ends), so Enter confirms and Escape cancels.
++ */
++function focusConfirmButton() {
++    const startTime = Date.now();
++
++    const tryFocus = () => {
++        const button = document.querySelector('.dialog.opened .btnOption[data-id="ok"]');
++        if (!button) {
++            if (Date.now() - startTime < 5000) {
++                setTimeout(tryFocus, 50);
++            }
++            return;
++        }
++
++        const dlg = button.closest('.dialog');
++        const focusButton = () => setTimeout(() => button.focus());
++        if (dlg.getAnimations().some(animation => animation.playState === 'running')) {
++            dlg.addEventListener('animationend', focusButton, { once: true });
++        } else {
++            focusButton();
++        }
++    };
++
++    tryFocus();
++}
++
++export function enable() {
++    window.addEventListener('keydown', (e) => {
++        if (!isDeleteShortcut(e) || e.repeat) {
++            return;
++        }
++
++        // Override the browser's own Ctrl+Shift+D (bookmark all tabs)
++        e.preventDefault();
++        e.stopPropagation();
++
++        if (isDeleting) {
++            return;
++        }
++
++        isDeleting = true;
++        deletePlayingItem()
++            .catch(() => {
++                // Deletion cancelled or failed; deleteHelper already shows any error
++            })
++            .finally(() => {
++                isDeleting = false;
++            });
++    }, true);
++}
++
++export default {
++    enable,
++    isDeleteShortcut
++};
+diff --git a/src/strings/en-us.json b/src/strings/en-us.json
+index 596b96f708..09fbb2f25f 100755
+--- a/src/strings/en-us.json
++++ b/src/strings/en-us.json
+@@ -1181,6 +1181,7 @@
+     "MessageContactAdminToResetPassword": "Please contact your system administrator to reset your password.",
+     "MessageCreateAccountAt": "Create an account at {0}",
+     "MessageDeleteTaskTrigger": "Are you sure you wish to delete this task trigger?",
++    "MessageDeletePlayingItemNotAllowed": "You don't have permission to delete the item that is playing.",
+     "MessageDownloadQueued": "Download queued.",
+     "MessageEnablingOptionLongerScans": "Enabling this option may result in significantly longer library scans.",
+     "MessageFileReadError": "There was an error reading the file. Please try again.",
+-- 
+2.56.1
+
