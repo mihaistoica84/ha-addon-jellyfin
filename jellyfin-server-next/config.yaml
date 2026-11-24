@@ -1,5 +1,5 @@
 name: Jellyfin Server (Next)
-version: 2.4.0
+version: 2.5.0
 slug: jellyfinservernext
 description: Jellyfin Server add-on built with extra fixes, using its own data in /share/jellyfin-next
 url: https://github.com/mihaistoica84/ha-addon-jellyfin/tree/main/jellyfin-server-next
